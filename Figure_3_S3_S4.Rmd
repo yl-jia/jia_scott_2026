@@ -1,0 +1,398 @@
+---
+title: "Figur3_S3_S4"
+author: "Yelon"
+date: "2026-03-06"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r}
+# BiocManager::install("Rsamtools")
+# devtools::install_github("zhanghao-njmu/SCP") # Install SCP under R4.4.1
+
+# options(reticulate.conda_binary = "/Users/yelon/miniconda3/bin/conda")
+# SCP::PrepareEnv()
+options(reticulate.conda_binary = "/Users/yelon/miniconda3/bin/conda",SCP_env_name = "SCP_env")
+library(SCP)
+
+library(ggplot2)
+library(Seurat)  # Seurat_4.4.0
+set.seed(805181) ## for reproduciblility of figures
+```
+
+## Fig_3
+
+### Fig_3A_all cells plot
+
+```{r}
+load(processed_seurat, file = "processed_annotated_seurat.Rdata")
+processed_seurat-> selected_obj
+
+#> define the color
+library(scales)
+library(ggsci)
+
+mycolor<-pal_igv("default", alpha = 0.8)(22)
+show_col(mycolor)
+
+mycolor= c(
+"BAS-I"="#6BD76BCC",
+"BAS-II"="#749B58CC"  ,
+"BAS-III"="#CDDEB7CC",
+"BAS-IV"="#466983CC" ,
+"BAS-V"="#5DB1DDCC",
+"SPN-I"= "#924822CC",
+"SPN-II"= "#D58F5CCC",
+"SPN-III"= "#E4AF69CC",
+"SPN-IV"= "#F0E685CC" ,
+"GRN-I"= "#AE1F63CC",
+"GRN-II"= "#802268CC",
+"GRN-III"= "#D595A7CC",
+"Fib"= "#CE3D32CC",
+"MEL" = "#5050FFCC",
+"HF"= "#7A65A5CC",
+"LC" = "#C75127CC",
+"Endo" = "#3B1B53CC")
+
+# reorder the cell types
+selected_obj$cell_type_0.7 <- factor(x = selected_obj$cell_type_0.7, levels = c(
+"BAS-I",
+"BAS-II",
+"BAS-III",
+"BAS-IV",
+"BAS-V",
+"SPN-I",
+"SPN-II",
+"SPN-III",
+"SPN-IV" ,
+"GRN-I",
+"GRN-II",
+"GRN-III",
+"Fib",
+"MEL",
+"HF",
+"LC",
+"Endo"))
+```
+
+```{r}
+p1<-CellDimPlot(selected_obj, 
+            palcolor = mycolor , # customize the cell color
+            label = TRUE, # Add number
+            label_insitu = TRUE, # add cell type name
+            pt.size = 0.7, # define the point size
+            group.by = "cell_type_0.7",
+            reduction = "UMAP",
+            theme_use = "theme_blank")
+
+ggsave(p1,filename = "Fig3A_umap_all_cells.pdf",width = 12, height =6)
+```
+
+### Fig_3B_study split
+
+```{r}
+# reorder the study
+levels(selected_obj@meta.data$study)
+
+# Reorder the factor levels based on your desired order
+selected_obj@meta.data$study <- factor(selected_obj@meta.data$study, 
+levels = c("FsEpi","FibHSE","PmtHEE"))
+
+p1<-CellDimPlot(selected_obj, 
+            palcolor = mycolor, # customize the cell color
+            pt.size = 0.7, # define the point size
+            group.by = "cell_type_0.7", 
+            split.by = "study",
+            reduction = "UMAP",
+            cells.highlight = TRUE,
+            theme_use = "theme_blank",
+            legend.position = "right",
+            nrow = 1,
+            ncol = 3) +
+      theme(plot.title = element_text(size = 20))
+
+ggsave(p1,filename = "Fig3B_split_study.pdf",
+       width = 15, height =5)
+```
+
+### Fig_3C_VlnPlot for all cells markers
+
+```{r}
+#>> SET rna assay
+DefaultAssay(selected_obj) <- "RNA"
+Idents(selected_obj) <- 'cell_type_0.7'
+
+plot_genes <- c(
+  "CCNB1", #BAS-I
+  "MKI67", # BAS-I, BAS-II
+  "PCNA", # BAS-II, BAS-III
+  "KRT15", # BAS-IV
+  "KRT5","KRT14", # BAS-V
+  "KRT1","KRT10", # SPN-I/II/III/IV
+  "SPINK5", # GRN-I/II
+  "FLG", # GRN-III
+  "DCN", # Fib
+  "PMEL", # MEL
+  "KRT17", # HF
+  "CD207", # Langerhans
+  "PECAM1") # ENDO
+
+## personalize the x-axis oeder
+selected_obj$cell_type_0.7 <- factor(x = selected_obj$cell_type_0.7, levels = c(
+"BAS-I",
+"BAS-II",
+"BAS-III",
+"BAS-IV",
+"BAS-V",
+"SPN-I",
+"SPN-II",
+"SPN-III",
+"SPN-IV" ,
+"GRN-I",
+"GRN-II",
+"GRN-III",
+"Fib",
+"MEL",
+"HF",
+"LC",
+"Endo"))
+
+p1 <- VlnPlot(selected_obj, 
+              features= plot_genes,
+              group.by="cell_type_0.7",
+              stack = T, 
+              sort = F, 
+              flip = T, 
+              fill.by = "ident",
+              cols= mycolor) +  # the order of color very important for legend, legend follows only the color order without name.
+theme(axis.text = element_text(size = 10)) + 
+theme(text = element_text(size = 10))+ 
+theme(legend.position = "right")+ xlab("")+
+stat_summary(fun.y = median, geom='point',size= 5, colour = "black", shape = 95)
+
+ggsave("Fig3C_marker_genes_vlnplot.pdf", plot = p1, width = 6 , height = 5)
+```
+
+## Fig_S3
+
+```{r}
+library(CellChat)
+# install.packages("devtools")
+# devtools::install_github("immunogenomics/presto")
+# devtools::install_github("jinworks/CellChat")
+
+library(exFINDER)
+## devtools::install_github("xyang2uchicago/BioTIP"), as dependencies
+# library("devtools")
+#library(org.Mm.eg.db)
+# BiocManager::install("org.Mm.eg.db"), as dependencies
+# BiocManager::install("org.Dr.eg.db")
+## devtools::install_github("ChanghanGitHub/exFINDER")
+# devtools::install_local("exFinder_data/exFINDER.zip") 
+
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(RColorBrewer)
+library(dplyr)
+library(pheatmap)
+library(ggraph)
+
+set.seed(805181) ## for repeatability of cluster mapping.
+```
+
+### FigS3A-B
+
+-   piechart for dataset composition
+
+```{r}
+## donor number in each study
+library(ggpie)
+  # BiocManager::install("ggpie")
+library(ggplot2)
+```
+
+```{r}
+## load new_all cells integrated obj with annotation
+load(processed_seurat, file = "processed_annotated_seurat.Rdata")
+processed_seurat-> selected_obj
+```
+
+```{r}
+# prepare the piechart data
+selected_obj@meta.data-> piechart_data
+
+my_colors = c(FsEpi = "#01D65C", 
+               FibHSE = "#FF7878",
+               PmtHEE = "#3859FF")
+
+## cell_number in study
+p1<-ggpie(data = piechart_data, 
+      group_key = "study", 
+      count_type = "full", # "count" or "full"
+      label_info = "all",  # "count","ratio" or "all"
+      label_type = "circle",# "horizon" , "none", "circle"
+      label_split = NULL,
+      label_size = 3, 
+      label_pos = "in",
+      border_color="white",
+      border_size = 0.5)+
+      ggtitle("Study_ratio")+
+      scale_fill_manual(values = my_colors) + 
+      theme(plot.title.position = "plot")
+p1
+
+ggsave("FigS3A_piechart_study.pdf",
+       plot = p1, 
+       width = 5, height = 5)
+```
+
+```{r}
+## cell_number in samples
+p1<-ggpie(data = piechart_data, 
+      group_key = "orig.ident", 
+      count_type = "full", # "count" or "full"
+      label_info = "all",  # "count","ratio" or "all"
+      label_type = "circle",# "horizon" , "none", "circle"
+      label_split = NULL,
+      label_size = 3, 
+      label_pos = "in",
+      border_color="white",
+      border_size = 0.5)+
+      ggtitle("Samples")+
+      theme(plot.title.position = "plot")
+p1
+
+ggsave("FigS3B_piechart_samples.pdf",
+       plot = p1, 
+       width = 5, height = 5)
+```
+
+### FigS3C
+
+```{r}
+## load the annotated object with 3 all conditios
+# load("processed_annotated_seurat.Rdata") # Fig3A obj
+# processed_seurat-> selected_obj
+
+#> define the color
+library(scales)
+library(ggsci)
+
+mycolor<-pal_igv("default", alpha = 0.8)(22)
+show_col(mycolor)
+
+mycolor= c(
+"BAS-I"="#6BD76BCC",
+"BAS-II"="#749B58CC"  ,
+"BAS-III"="#CDDEB7CC",
+"BAS-IV"="#466983CC" ,
+"BAS-V"="#5DB1DDCC",
+"SPN-I"= "#924822CC",
+"SPN-II"= "#D58F5CCC",
+"SPN-III"= "#E4AF69CC",
+"SPN-IV"= "#F0E685CC" ,
+"GRN-I"= "#AE1F63CC",
+"GRN-II"= "#802268CC",
+"GRN-III"= "#D595A7CC",
+"Fib"= "#CE3D32CC",
+"MEL" = "#5050FFCC",
+"HF"= "#7A65A5CC",
+"LC" = "#C75127CC",
+"Endo" = "#3B1B53CC")
+
+# reorder the cell types
+selected_obj$cell_type_0.7 <- factor(x = selected_obj$cell_type_0.7, levels = c(
+"BAS-I",
+"BAS-II",
+"BAS-III",
+"BAS-IV",
+"BAS-V",
+"SPN-I",
+"SPN-II",
+"SPN-III",
+"SPN-IV" ,
+"GRN-I",
+"GRN-II",
+"GRN-III",
+"Fib",
+"MEL",
+"HF",
+"LC",
+"Endo"))
+```
+
+```{r}
+### plot -> barplot
+library(Seurat)
+library(scRNAtoolVis)
+library(tidyverse)
+library(patchwork)
+library(viridis)
+library(scCustomize)
+
+library(scales)
+library(ggsci)
+
+# mycolor # Defined already
+
+# reorder the cell types
+  # selected_obj$cell_type_0.7, defined already above
+
+# selected_obj$orig.ident, for sample.name
+
+p1<-cellRatioPlot(object = selected_obj,
+              sample.name = "orig.ident", # x-axis data, for all samples
+              celltype.name = "cell_type_0.7", # filled value
+              col.width	= 0.7, #column width, default 0.7.
+              fill.col = mycolor, # For each state
+              flow.alpha = 0.25, # flow color alpha, default 0.25. transparency
+              flow.curve = 0.5)+
+  theme(axis.text.x.bottom = element_text(angle = 45,
+                                          hjust = 1,
+                                          size = 10,
+                                          color = "black"))
+
+ggsave("FigS3C_barplot_all_sample_ratio.pdf", plot = p1, 
+       width = 7, height = 7)
+```
+
+## Figure S4
+
+-   Feature plot for selected marker genes
+
+```{r}
+DefaultAssay(selected_obj) <- "RNA" 
+
+## the plotting should less than 90, else, will lose some plotting for certain genes.
+known_marker=c(
+  ## Fibroblast
+  "DCN",
+  ## Mitotic KC: [ Proliferating KC = Mitotic cells = proliferative stem cells]
+  "MKI67", 
+  "CCNB1",
+  "PCNA",
+  # Basal keratinocyte (BK) = Undifferentiated keratinocytes
+  "KRT14", "KRT5", "KRT15", 
+  "KRT10","KRT1",
+  ## Granular KC
+  "FLG", "SPINK5",
+  "KRT17",
+  "PECAM1",
+  "CD207",  # Langerhans
+  "PMEL")   # Immune cells
+```
+
+```{r}
+p1<- FeaturePlot(selected_obj,
+                 pt.size = 0.5, 
+                 reduction= "umap",
+                 features= unique(known_marker),
+                 ncol = 5) & scale_colour_gradientn(colours = colorRampPalette(c("blue","green","yellow","orange","red"))(20))
+
+p1
+
+ggsave("FigS4_Dimplot_marker_gene_integrated_seurat.pdf", 
+       plot = p1, width = 25, height =15)
+```

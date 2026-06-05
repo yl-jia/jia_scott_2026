@@ -1,0 +1,573 @@
+---
+title: "comaprison"
+author: "Yelon"
+date: "2026-04-14"
+output: html_document
+---
+
+```{r}
+library(CellChat)
+# install.packages("devtools")
+# devtools::install_github("immunogenomics/presto")
+# devtools::install_github("jinworks/CellChat")
+
+library(exFINDER)
+## devtools::install_github("xyang2uchicago/BioTIP"), as dependencies
+# library("devtools")
+#library(org.Mm.eg.db)
+# BiocManager::install("org.Mm.eg.db"), as dependencies
+# BiocManager::install("org.Dr.eg.db")
+## devtools::install_github("ChanghanGitHub/exFINDER")
+# devtools::install_local("exFinder_data/exFINDER.zip") 
+
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(RColorBrewer)
+library(dplyr)
+library(pheatmap)
+library(ggraph)
+
+set.seed(805181) ## for repeatability of cluster mapping.
+```
+
+## 0- load seurat split object and ltGRN
+
+```{r}
+## RUN first "Figure_S6A_3" to generate "R11_3_split_obj_for_Exfinder.Rdata"
+load("R11_3_split_obj_for_Exfinder.Rdata")
+###> Fib_obj,FsEpi_obj,PmtHEE_obj
+
+## RUN first "Figure_S6A_1" to generate "R12_7_KC_target_genes_ltGRN.Rdata"
+load("R12_7_KC_target_genes_ltGRN.Rdata")
+###> target.gene,ltGRN
+###> 
+###> 
+# load exFINDER database
+load("exFinder_data/LR_layer1_human.rda")
+load("exFinder_data/RTF_layer2_human.rda")
+load("exFinder_data/TFT_layer3_human.rda")
+
+exFINDER.H <- list()
+exFINDER.H[[1]] <- LR_layer1_human
+exFINDER.H[[2]] <- RTF_layer2_human
+exFINDER.H[[3]] <- TFT_layer3_human
+```
+
+## 1- FsEpi vs. PmtHEE
+
+-   exSigNet: all ltGRNs from env and non-target cells
+
+-   exSigNet.2: cell-specific ltGENs
+
+-   exSigNet.4: env-specific ltGRNs
+
+### 1.1 Prepare data.frame for FsEpi and PmtHEE
+
+```{r}
+##> FsEpi
+##> 
+## Load dataset from FsEpi
+load("R12_exFINDER_FsEpi.Rdata")
+  #> exSigNet,exSigNet.2,exSigNet.3,exSigNet.4
+  #> only exSigNet, exSigNet.2, and exSigNet.4 useful
+
+# prepare the data farame for MEL-ltGRNs
+exSigNet.2$Graph.Node-> FsEpi_MEL_genes
+exSigNet.2$Graph.Edge-> FsEpi_MEL_ltGRNs
+
+# prepare the data frame for Env-ltGRNs
+exSigNet.4$Graph.Node-> FsEpi_env_genes
+exSigNet.4$Graph.Edge-> FsEpi_env_ltGRNs
+```
+
+```{r}
+##> PmtHEE
+##> 
+## Load dataset from FsEpi
+load("R14_exFINDER_PmtHEE.Rdata")
+  #> exSigNet.4
+
+# prepare the data farame for Env-ltGRNs
+exSigNet.4$Graph.Node-> PmtHEE_env_genes
+exSigNet.4$Graph.Edge-> PmtHEE_env_ltGRNs
+```
+
+### 1.2 Comparison for MEL-\> KC
+
+```{r}
+## Ligand comparison
+FsEpi_MEL_ligand <- subset(FsEpi_MEL_genes, Role == "Ligand")
+PmtHEE_env_ligand <- subset(PmtHEE_env_genes, Role == "Ligand")
+intersect(FsEpi_MEL_ligand$Gene,PmtHEE_env_ligand$Gene)-> MEL_genes
+    #>> L1CAM as shared between FsEpi and PmtHEE
+```
+
+#### [Visualize shared MEL-\> KC in FsEpi]
+
+-   prepare the dataset
+
+```{r}
+## prepare the dataser for FsEpi
+selected_obj <- FsEpi_obj
+
+# define the factor
+selected_obj$Type <- as.factor(selected_obj$Cell_states) # add "Type", very improtant for later analysis
+
+##> [KC-only] dataset
+cell_id <- subset(selected_obj@meta.data, 
+                  !Cell_states %in% c("MEL")) # 15103 cells
+kc_only_cells <- subset(selected_obj, cells=row.names(cell_id))
+
+exp.data2 <- kc_only_cells@assays$RNA@data
+meta.data2 <- kc_only_cells@meta.data ## need column ""Type" for cell labels
+
+#> [All cells] the complete dataset contains all cells, which used for "external signals" from unknown cells or environment.
+exp.Exdata <- selected_obj@assays$RNA@data
+meta.Exdata <- selected_obj@meta.data
+```
+
+```{r}
+# Select L1CAM-related TF and ltGRNs 
+exSigNet.2$Graph.Edge -> modi_L1CAM_EsEpi_edges
+    # modi_L1CAM_EsEpi_genes<- exSigNet.TF_FsEpi$Graph.Edge
+
+###> Output for modi, keep only L1CAM-realted TF, use it for next analysis.
+library(openxlsx)
+write.xlsx(modi_L1CAM_EsEpi_edges,rowNames=F,
+           "R15_edges.xlsx") 
+
+# selected L1CAM-related TFs "CLDN1","EGR1","MYC","JUN","PCBP2","PHGDH","SF1","SFPQ","SNRNP70","SQSTM1","GTF3A" [11 selected TFs from L1CAM-realted TF]
+exSigNet.TF_FsEpi <- get_subNet(Graph = exSigNet.2, # FsEpi_MEL
+           TF = c("CLDN1","EGR1","MYC","JUN","PCBP2",
+                  "PHGDH","SF1","SFPQ","SNRNP70","SQSTM1",
+                  "GTF3A")) 
+
+##> Remove any other ligands, besides L1CAM
+
+    # For L1CAM-related edges, output the TF table
+exSigNet.TF_FsEpi$Graph.Edge -> modi_L1CAM_EsEpi_edges
+library(openxlsx) # outpuf for modi
+write.xlsx(modi_L1CAM_EsEpi_edges,rowNames=F,
+           "R15_edges.xlsx")
+library(readxl)     # input modified table
+edges_TF <- read_excel("R15_edges.xlsx")
+
+    # For L1CAM-related genes, output the TF table
+exSigNet.TF_FsEpi$Graph.Node -> modi_L1CAM_EsEpi_genes
+library(openxlsx) # outpuf for modi
+write.xlsx(modi_L1CAM_EsEpi_genes,rowNames=F,
+           "R15_genes.xlsx")
+library(readxl)   # input modified table
+genes_TF <- read_excel("R15_genes.xlsx")
+
+##> Replace the old edges by new_edges
+exSigNet.TF_FsEpi$Graph.Edge<- edges_TF
+exSigNet.TF_FsEpi$Graph.Node<- genes_TF
+```
+
+-   save modified exSigNet
+
+```{r}
+## save 
+save(exSigNet.TF_FsEpi, file = "R15_1.2_L1CAM-TF_MEL_FsEpi.Rdata")
+```
+
+-   heatmap
+
+```{r}
+# prepare the dataframe for heatmap plot [env ligand-target network]
+#> if error, use "get_AveExp(Gene = unique(exSigNet$Graph.Node$Gene),"
+Graph <- exSigNet.TF_FsEpi
+
+exS.2_exp <- get_AveExp(Gene = Graph$Graph.Node$Gene,
+           Exp.Data = exp.Exdata, # all cells
+           Meta.Data = meta.Exdata)  # all cells
+
+exS.2_exp.HP <- exS.2_exp
+exS.2_exp.HP <- exS.2_exp.HP[, -1]
+row.names(exS.2_exp.HP) <- exS.2_exp$Gene
+
+# make data.frame includes all cell states
+exS.2_exp.HP <- data.frame("BAS" = exS.2_exp.HP$BAS,
+                     "SPN" = exS.2_exp.HP$SPN, 
+                     'GRN' = exS.2_exp.HP$GRN,
+                     "MEL" = exS.2_exp.HP$MEL)
+
+row.names(exS.2_exp.HP) <- exS.2_exp$Gene
+
+# [annotation col] customize the row labels and col labels
+annotation_col = data.frame(
+  CellType = c("KC", "KC", "KC", "MEL"))
+rownames(annotation_col) = colnames(exS.2_exp.HP)
+
+
+annotation_row <- data.frame(Role = Graph$Graph.Node$Role)
+row.names(annotation_row) <- row.names(exS.2_exp.HP)
+```
+
+```{r}
+# heatmap plot
+bk <- c(seq(0,1.99,by=0.01), seq(2,4.5,by=0.01))
+
+p <- pheatmap(exS.2_exp.HP, # modify the gene list can modify the heatmap.
+         cluster_row = FALSE, 
+         cluster_cols = FALSE, 
+         cellwidth = 12, 
+         cellheight = 12,
+         # gaps_row = c(1, 2, 6),
+         fontsize_row = 10,
+         fontsize_col = 10,
+         annotation_row = annotation_row,
+         annotation_col = annotation_col,
+         color = colorRampPalette(rev(brewer.pal(n = 7, name ="RdYlBu")))(length(bk)),
+         breaks=bk)
+
+ggsave(p,filename = "R15_1.2_heatmap_L1CAM-TF_exSigNet_FsEpi.pdf",
+       width = 10, height =20)
+```
+
+#### [Visualize shared MEL-\> KC in PmtHEE]
+
+-   prepare the dataset
+
+```{r}
+selected_obj <- PmtHEE_obj
+
+####> PmtHEE KC
+selected_obj$Type <- as.factor(selected_obj$Cell_states) # add "Type", very improtant for later analysis
+
+cell_id <- subset(selected_obj@meta.data, 
+                  !Cell_states %in% c("MEL")) # 1796 cells
+kc_only_cells <- subset(selected_obj, cells=row.names(cell_id))
+
+exp.data2 <- kc_only_cells@assays$RNA@data
+meta.data2 <- kc_only_cells@meta.data ## need column ""Type" for cell labels
+
+meta.data2$Type <- droplevels(meta.data2$Type) # if still MEL error
+
+###> PmtHEE [All cells]
+exp.Exdata <- selected_obj@assays$RNA@data
+meta.Exdata <- selected_obj@meta.data
+```
+
+-   Prepare the plot data
+
+```{r}
+exSigNet.4 # Env-specific Ligands
+
+# Select L1CAM-related TF and ltGRNs 
+exSigNet.4$Graph.Edge -> modi_L1CAM_PmtHEE_edges
+
+###> Output for modi, keep only L1CAM-realted TF, use it for next analysis.
+library(openxlsx)
+write.xlsx(modi_L1CAM_PmtHEE_edges,rowNames=F,
+           "R15_edges.xlsx") 
+
+# selected L1CAM-related TFs "JUN","NOTCH2","PCBP2","PHGDH","SFPQ","H2AZ1" [6 selected TFs from L1CAM-realted TF]
+exSigNet.TF_PmtHEE <- get_subNet(Graph = exSigNet.4, # FsEpi_MEL
+           TF = c("JUN","NOTCH2","PCBP2","PHGDH","SFPQ","H2AZ1"))
+
+##> Remove any other ligands, besides L1CAM
+
+    # For L1CAM-related edges, output the TF table
+exSigNet.TF_PmtHEE$Graph.Edge -> modi_L1CAM_PmtHEE_edges
+library(openxlsx) # outpuf for modi
+write.xlsx(modi_L1CAM_PmtHEE_edges,rowNames=F,
+           "R15_edges.xlsx")
+library(readxl)   # input modified table
+edges_TF <- read_excel("R15_edges.xlsx")
+
+    # For L1CAM-related genes, output the TF table
+exSigNet.TF_PmtHEE$Graph.Node -> modi_L1CAM_PmtHEE_genes
+library(openxlsx) # outpuf for modi
+write.xlsx(modi_L1CAM_PmtHEE_genes,rowNames=F,
+           "R15_genes.xlsx")
+library(readxl)   # input modified table
+genes_TF <- read_excel("R15_genes.xlsx")
+
+##> Replace the old edges by new_edges
+exSigNet.TF_PmtHEE$Graph.Edge<- edges_TF
+exSigNet.TF_PmtHEE$Graph.Node<- genes_TF
+```
+
+-   save modified exSigNet
+
+```{r}
+## save 
+save(exSigNet.TF_PmtHEE, file = "R15_1.2_L1CAM-TF_MEL_PmtHEE.Rdata")
+```
+
+-   heatmap
+
+```{r}
+# prepare the dataframe for heatmap plot [env ligand-target network]
+#> if error, use "get_AveExp(Gene = unique(exSigNet$Graph.Node$Gene),"
+Graph <- exSigNet.TF_PmtHEE
+
+exS.2_exp <- get_AveExp(Gene = Graph$Graph.Node$Gene,
+           Exp.Data = exp.data2, # all cells
+           Meta.Data = meta.data2)  # all cells
+
+exS.2_exp.HP <- exS.2_exp
+exS.2_exp.HP <- exS.2_exp.HP[, -1]
+row.names(exS.2_exp.HP) <- exS.2_exp$Gene
+
+# make data.frame includes all cell states
+exS.2_exp.HP <- data.frame("BAS" = exS.2_exp.HP$BAS,
+                     "SPN" = exS.2_exp.HP$SPN, 
+                     'GRN' = exS.2_exp.HP$GRN)
+
+row.names(exS.2_exp.HP) <- exS.2_exp$Gene
+
+# [annotation col] customize the row labels and col labels
+annotation_col = data.frame(
+  CellType = c("KC", "KC", "KC"))
+rownames(annotation_col) = colnames(exS.2_exp.HP)
+
+
+annotation_row <- data.frame(Role = Graph$Graph.Node$Role)
+row.names(annotation_row) <- row.names(exS.2_exp.HP)
+```
+
+```{r}
+# heatmap plot
+bk <- c(seq(0,1.99,by=0.01), seq(2,4.5,by=0.01))
+
+role_colors <- c(
+  "Ligand" = "#FF89FF", 
+  "Receptor" = "#FF9288",  
+  "TF" = "#01D65C",  
+  "Target" = "#82B7FF"   # pink
+)
+
+annotation_colors <- list(Role = role_colors,
+                          CellType = c("KC" = "#BEC100"))
+
+bk <- c(seq(0,1.99,by=0.01), seq(2,4.5,by=0.01))
+
+p <- pheatmap(exS.2_exp.HP, # modify the gene list can modify the heatmap.
+         cluster_row = FALSE, 
+         cluster_cols = FALSE, 
+         cellwidth = 12, 
+         cellheight = 12,
+         # gaps_row = c(1, 2, 6),
+         fontsize_row = 10,
+         fontsize_col = 10,
+         annotation_row = annotation_row,
+         annotation_col = annotation_col,
+         annotation_colors = annotation_colors,
+         color = colorRampPalette(rev(brewer.pal(n = 7, name ="RdYlBu")))(length(bk)),
+         breaks=bk)
+
+ggsave(p,filename = "R15_1.2_heatmap_L1CAM-TF_exSigNet_PmtHEE.pdf",
+       width = 10, height =20)
+```
+
+## 2- Common ltGRN of MEL-\> KC
+
+### [Figure_6C] 2.1 Common elements in Heatmap
+
+-   BASED ON the previously generated figures. and combined, modified by Adobe Ilustrator.
+
+![](images/Screenshot%202025-04-16%20at%2012.17.47%E2%80%AFAM.png){width="288"}
+
+### 2.2 Common L1CAM/EZR-related ltGRN
+
+```{r}
+# prepare the data farame for Env-ltGRNs
+exSigNet.TF_FsEpi$Graph.Node-> FsEpi_MEL_genes
+exSigNet.TF_PmtHEE$Graph.Node-> PmtHEE_MEL_genes
+
+FsEpi_MEL_TF <- subset(FsEpi_MEL_genes, Role == "TF")
+PmtHEE_MEL_TF <- subset(PmtHEE_MEL_genes, Role == "TF")
+intersect(FsEpi_MEL_TF$Gene,PmtHEE_MEL_TF$Gene)-> Common_TF_genes ## TF
+    #>> "JUN"   "PCBP2" "PHGDH" "SFPQ" 
+    #>
+# common ltGRN
+```
+
+```{r}
+### Select COMMON TF for ltGRNs
+exSigNet.TF_common_ltGRN <- get_subNet(Graph = exSigNet.TF_PmtHEE, # FsEpi_MEL
+           TF = Common_TF_genes)
+
+exSigNet.TF_common_ltGRN$Graph.Edge-> final_common_ltGRN
+
+## Save
+library(openxlsx) # outpuf for modi
+write.xlsx(final_common_ltGRN,rowNames=F,
+           "R15_2.2_L1CAM_common_TF_ltGRN_FsEpi_PmtHEE.xlsx")
+
+save(exSigNet.TF_common_ltGRN, file = "R15_2.2_final_LICAN-EZR_ltGRN_FsEpi_PmtHEE.Rdata")
+```
+
+## 3- Ligand Venn plot
+
+-   exSigNet.2: cell-specific ltGENs
+
+-   exSigNet.4: env-specific ltGRNs
+
+### 3.1- Data preparation
+
+```{r}
+## load exSigNet for each condition
+load("R14_exFINDER_PmtHEE.Rdata")
+exSigNet.4$Graph.Node-> PmtHEE_env_genes
+PmtHEE_env_Ligand <- subset(PmtHEE_env_genes, Role == "Ligand")
+
+load("R13_exFINDER_FibHSE.Rdata")
+exSigNet.4$Graph.Node-> FibHSE_env_genes
+FibHSE_env_Ligand <- subset(FibHSE_env_genes, Role == "Ligand")
+
+load("R12_exFINDER_FsEpi.Rdata")
+exSigNet.2$Graph.Node-> FsEpi_MEL_genes
+FsEpi_MEL_Ligand <- subset(FsEpi_MEL_genes, Role == "Ligand")
+
+FsEpi_MEL_Ligand 
+```
+
+### [Figure_6B] 3.2- Venn plot
+
+```{r}
+library(eulerr)
+  # BiocManager::install("eulerr")
+set.seed(805181)
+
+new_genelist <- list(FsEpi_MEL = FsEpi_MEL_Ligand$Gene,
+                     FibHSE_env= FibHSE_env_Ligand$Gene,
+                     PmtHEE_env = PmtHEE_env_Ligand$Gene)
+  # save
+  new_genelist-> ligand_comparison
+  save(ligand_comparison, file = "R15_3.2_data_ligand_venn_plot.Rdata")
+
+p1<-euler(new_genelist, shape = "ellipse")
+
+p2<-plot(p1,
+     fills = c(FsEpi_MEL = "#01D65C", 
+               FibHSE_env= "#FF7878",
+               PmtHEE_env= "#3859FF"),     #"#00CBFF"
+     edges = FALSE,
+     fontsize = 20,
+     quantities = list(fontsize = 13))
+
+ggsave("Fig6B_ligand_venn_plot.pdf",
+       plot = p2,
+       width = 7, 
+       height =5)
+```
+
+## [Fig_S6B] 4- GO_BP enrichment analysis
+
+```{r}
+library(org.Hs.eg.db)
+library(clusterProfiler)
+
+# using final exSignet for L1CAM
+exSigNet.TF_common_ltGRN
+
+# GO analysis and evaluate top 5 GO terms
+GO.exSigNet <- get_EnrichAnalysis(Graph = exSigNet.TF_common_ltGRN,
+                               OrgDb = org.Hs.eg.db,
+                               Number.of.Terms = 5,
+                               ont = "BP",
+                               pvalueCutoff = 0.05,
+                               qvalueCutoff = 0.05)
+
+# enrichment clusterprofile obj
+GO.exSigNet$`GO analysis results`-> ego
+
+p1<-barplot(ego,
+        x="Count", ## can be changed as "GeneRatio" or "Percentage".
+        font.size = 13,
+        color = "qvalue", # Can be changed to qvalue or p.adjust
+        showCategory=5, title="L1CAM-EZR ltGRN")
+
+## the order is from the most signficant to the least, according to the pvalue.
+## only the GO term [ratio>0] could be drawn out.
+
+
+ggsave("FigS6B_common_L1CAM-EZR_GO_BP_plot.pdf",
+       plot = p1,
+       width = 7, 
+       height =5)
+```
+
+## 5- VlnPlot for L1CAM-EZR and TFs
+
+### [Fig_6E]5.1- VlnPlot for FsEpi vs. PmtHEE
+
+```{r}
+load("R11_2_kc_fib_mel_in_all_cells.Rdata")
+# selected_study_cells
+
+DefaultAssay(selected_study_cells)<- "RNA"
+
+# select only FsEpi and PmtHEE
+cell_id <- subset(selected_study_cells@meta.data, 
+                  !study %in% c("FibHSE")) # 22475 cells
+
+## extract the cells along the defined ID 
+selected_obj <- subset(selected_study_cells, cells=row.names(cell_id))
+
+## reorder
+## personalize the x-axis oeder
+selected_obj$Cell_states <- factor(x = selected_obj$Cell_states, levels = c("BAS","SPN","GRN","MEL"))
+
+custom_colors = c(FsEpi_MEL = "#01D65C", 
+          PmtHEE_env= "#3859FF")
+
+plots <- VlnPlot(object = selected_obj, 
+                 features = c("L1CAM", "EZR", 
+                              "PCBP2","PHGDH","SFPQ","JUN"), 
+                 split.by = "study", 
+                 group.by = "Cell_states",
+                 pt.size = 0, 
+                 stack = T, 
+                 flip = T,
+                 cols=custom_colors) 
+
+ggsave("Fig6E_common_L1CAM-EZR_vlnplot.pdf",
+       plot = plots,
+       width = 7, 
+       height =5)
+```
+
+### [Fig_S7A] 5.2- VlnPlot for FsEpi, PmtHEE, FibHSE
+
+```{r}
+load("R11_2_kc_fib_mel_in_all_cells.Rdata")
+# selected_study_cells
+# Integrated FsEpi + FibHSE + PmtHEE
+
+DefaultAssay(selected_study_cells)<- "RNA"
+
+selected_study_cells-> selected_obj
+
+## personalize the x-axis oeder
+selected_obj$Cell_states <- factor(x = selected_obj$Cell_states, levels = c("BAS","SPN","GRN","Fib","MEL"))
+
+selected_obj$study <- factor(x = selected_obj$study, levels = c("FsEpi","PmtHEE","FibHSE"))
+## define the color with transparency.
+
+custom_colors = c(FsEpi = "#01D65C",
+          PmtHEE= "#3859FF",
+          FibHSE = "#FF7878")
+
+
+plots <- VlnPlot(object = selected_obj, 
+                 features = c("L1CAM", "EZR", 
+                              "PCBP2","PHGDH","SFPQ","JUN"), 
+                 split.by = "study", 
+                 group.by = "Cell_states",
+                 pt.size = 0, 
+                 stack = T, 
+                 flip = T,
+                 cols=custom_colors) 
+
+  
+ggsave("FigS7A_common_L1CAM-EZR_vlnplot.pdf",
+       plot = plots,
+       width = 7, 
+       height =5)
+```

@@ -1,0 +1,276 @@
+---
+title: "Slingshot_Figure 5"
+author: "Yelon"
+date: "2025-06-06"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+## slingshot analysis [FsEpi/FibHSE/PmtHEE]
+
+```{r}
+library(Seurat)  # Seurat_4.4.0
+# BiocManager::install("DelayedMatrixStats")
+# BiocManager::install("kstreet13/slingshot")
+library(slingshot)
+# BiocManager::install("DelayedMatrixStats")
+
+set.seed(805181) ## for repeatability of cluster mapping.
+```
+
+### Fig_5A_1- FsEpi lineage
+
+```{r}
+##> input is seurat list
+load("seurat_KC_list.Rdata")
+kc_list$FsEpi -> selected_obj
+
+#> Save the objects as separate matrices for input in slingshot
+dimred <- selected_obj@reductions$umap@cell.embeddings # embedding
+clustering <- selected_obj$cell_type_0.7 # the target anno
+feature_genes<-selected_obj@assays$integrated@var.features # selected HVG
+counts <- as.matrix(selected_obj@assays$RNA@counts[feature_genes, ]) # keep only HVG count matrix
+```
+
+```{r}
+#> lineage analysis
+set.seed(1)
+lineages <- getLineages(data = dimred,
+                        clusterLabels = clustering)
+            ## start.clus = '1' , set start point
+            ## end.clus = " ", set end point.
+
+lineages@metadata$lineages-> path_kc
+  # 5 paths
+```
+
+```{r}
+##> 3- Plot the lineages
+library(RColorBrewer)
+library(ggplot2)
+
+# define the cluster colors
+cluster_color= c(
+"BAS-I"="#6BD76BCC",
+"BAS-II"="#749B58CC"  ,
+"BAS-III"="#CDDEB7CC",
+"BAS-IV"="#466983CC" ,
+"BAS-V"="#5DB1DDCC",
+"SPN-I"= "#924822CC",
+"SPN-II"= "#D58F5CCC",
+"SPN-III"= "#E4AF69CC",
+"SPN-IV"= "#F0E685CC" ,
+"GRN-I"= "#AE1F63CC",
+"GRN-II"= "#802268CC",
+"GRN-III"= "#D595A7CC")
+
+cluster_color[clustering]-> anno_clolor # define the color for cell_types
+
+# Plot the lineages
+pdf("Fig5A_1_FsEpi_umap_lineages.pdf", width=6, height=6)
+plot(dimred[, 1:2], 
+     col = anno_clolor, 
+     cex = 0.5, 
+     pch = 16) +
+lines(SlingshotDataSet(lineages), 
+      lwd = 3, # line width
+      col = "#4B3D34")
+    ## show.constraints = TRUE
+dev.off()
+```
+
+### Fig_5A_2- FibHSE
+
+```{r}
+##> input is seurat list
+load("seurat_KC_list.Rdata")
+kc_list$FibHSE -> selected_obj
+
+## remove SPN-I, SPN-II, SPN-III, SPN-IV.from FibHSE
+# Subset cells that are NOT in the specified cell types
+selected_id <- selected_obj@meta.data[!(selected_obj@meta.data$cell_type_0.7 %in% c("SPN-I", "SPN-II", "SPN-III", "SPN-IV")), ] # 1803 cells
+#> extract only selected cells
+new_selected_obj <- subset(selected_obj, cells=row.names(selected_id))
+
+#new obj
+new_selected_obj-> selected_obj
+
+#> Save the objects as separate matrices for input in slingshot
+dimred <- selected_obj@reductions$umap@cell.embeddings # embedding
+clustering <- selected_obj$cell_type_0.7 # the target anno
+feature_genes<-selected_obj@assays$integrated@var.features # selected HVG
+counts <- as.matrix(selected_obj@assays$RNA@counts[feature_genes, ]) # keep only HVG count matrix
+```
+
+```{r}
+#> lineage analysis
+set.seed(1)
+lineages <- getLineages(data = dimred,
+                        clusterLabels = clustering)
+            ## start.clus = '1' , set start point
+            ## end.clus = " ", set end point.
+
+lineages@metadata$lineages-> path_kc
+  # 5 paths
+```
+
+```{r}
+##> 3- Plot the lineages
+library(RColorBrewer)
+library(ggplot2)
+
+# define the cluster colors
+cluster_color= c(
+"BAS-I"="#6BD76BCC",
+"BAS-II"="#749B58CC"  ,
+"BAS-III"="#CDDEB7CC",
+"BAS-IV"="#466983CC" ,
+"BAS-V"="#5DB1DDCC",
+"SPN-I"= "#924822CC",
+"SPN-II"= "#D58F5CCC",
+"SPN-III"= "#E4AF69CC",
+"SPN-IV"= "#F0E685CC" ,
+"GRN-I"= "#AE1F63CC",
+"GRN-II"= "#802268CC",
+"GRN-III"= "#D595A7CC")
+
+cluster_color[clustering]-> anno_clolor # define the color for cell_types
+
+# Plot the lineages
+pdf("Fig5A_2_FibHSE_umap_lineages.pdf", width=6, height=6)
+plot(dimred[, 1:2], 
+     col = anno_clolor, 
+     cex = 0.5, 
+     pch = 16) +
+lines(SlingshotDataSet(lineages), 
+      lwd = 3, # line width
+      col = "#4B3D34")
+    ## show.constraints = TRUE
+dev.off()
+```
+
+### Fig_5A_3- PmtHEE [BAS-I/II/III/IV free]
+
+```{r}
+##> input is seurat list
+load("seurat_KC_list.Rdata")
+kc_list$PmtHEE -> selected_obj
+
+## remove SPN-I, SPN-II, SPN-III, SPN-IV.from FibHSE
+# Subset cells that are NOT in the specified cell types
+selected_id <- selected_obj@meta.data[!(selected_obj@meta.data$cell_type_0.7 %in% c("BAS-I", "BAS-II", "BAS-III", "BAS-IV")), ] # 4109 cells
+#> extract only selected cells
+new_selected_obj <- subset(selected_obj, cells=row.names(selected_id))
+
+#new obj
+new_selected_obj-> selected_obj
+
+#> Save the objects as separate matrices for input in slingshot
+dimred <- selected_obj@reductions$umap@cell.embeddings # embedding
+clustering <- selected_obj$cell_type_0.7 # the target anno
+feature_genes<-selected_obj@assays$integrated@var.features # selected HVG
+counts <- as.matrix(selected_obj@assays$RNA@counts[feature_genes, ]) # keep only HVG count matrix
+```
+
+```{r}
+#> lineage analysis
+set.seed(1)
+lineages <- getLineages(data = dimred,
+                        clusterLabels = clustering,
+                        start.clus = 'BAS-V')
+            ## start.clus = '1' , set start point
+            ## end.clus = " ", set end point.
+
+lineages@metadata$lineages-> path_kc
+  # 5 paths
+```
+
+```{r}
+##> 3- Plot the lineages
+library(RColorBrewer)
+library(ggplot2)
+
+# define the cluster colors
+cluster_color= c(
+"BAS-I"="#6BD76BCC",
+"BAS-II"="#749B58CC"  ,
+"BAS-III"="#CDDEB7CC",
+"BAS-IV"="#466983CC" ,
+"BAS-V"="#5DB1DDCC",
+"SPN-I"= "#924822CC",
+"SPN-II"= "#D58F5CCC",
+"SPN-III"= "#E4AF69CC",
+"SPN-IV"= "#F0E685CC" ,
+"GRN-I"= "#AE1F63CC",
+"GRN-II"= "#802268CC",
+"GRN-III"= "#D595A7CC")
+
+cluster_color[clustering]-> anno_clolor # define the color for cell_types
+
+# Plot the lineages
+pdf("Fig5A_3_PmtHEE_umap_lineages.pdf", width=7, height=6)
+plot(dimred[, 1:2], 
+     col = anno_clolor, 
+     cex = 0.5, 
+     pch = 16) +
+lines(SlingshotDataSet(lineages), 
+      lwd = 3, # line width
+      col = "#4B3D34")
+    ## show.constraints = TRUE
+dev.off()
+```
+
+### Fig_5B
+
+```{r}
+# BiocManager::install("Rsamtools")
+# devtools::install_github("zhanghao-njmu/SCP") # Install SCP under R4.4.1
+
+# options(reticulate.conda_binary = "/Users/yelon/miniconda3/bin/conda")
+# SCP::PrepareEnv()
+options(reticulate.conda_binary = "/Users/yelon/miniconda3/bin/conda",SCP_env_name = "SCP_env") ## need  specify the conda path first before run SCP
+library(SCP)
+library(Seurat)  # Seurat_4.4.0
+
+set.seed(805181) ## seeds
+```
+
+```{r}
+load("KC_only_processed.Rdata")
+KC_only_processed-> selected_kc
+
+## plot
+cluster_color= c(
+"BAS-I"="#6BD76BCC",
+"BAS-II"="#749B58CC"  ,
+"BAS-III"="#CDDEB7CC",
+"BAS-IV"="#466983CC" ,
+"BAS-V"="#5DB1DDCC",
+"SPN-I"= "#924822CC",
+"SPN-II"= "#D58F5CCC",
+"SPN-III"= "#E4AF69CC",
+"SPN-IV"= "#F0E685CC" ,
+"GRN-I"= "#AE1F63CC",
+"GRN-II"= "#802268CC",
+"GRN-III"= "#D595A7CC")
+```
+
+```{r}
+p1<-CellDimPlot(selected_kc, 
+            palcolor = cluster_color, # customize the cell color
+            label = TRUE, # Add number
+            label_insitu = TRUE, # add cell type name
+            label.fg = "grey", ## change the label color
+            # alpha.highlight = 0.1, # the highlighr dot transparency
+            pt.alpha = 0.05, # dots transparency
+            # stroke.highlight = 0.1, # the border for highlight dots
+            # cells.highlight = FALSE,
+            pt.size = 0.7, # define the point size
+            group.by = "cell_type_0.7", 
+            reduction = "UMAP",
+            theme_use = "theme_blank",
+            legend.position = "none")
+
+ggsave(p1,filename = "Fig5B_summary_umap_plot_transparency.pdf",width = 9, height =6)
+```

@@ -1,0 +1,177 @@
+---
+title: "comaprison"
+author: "Yelon"
+date: "2026-04-14"
+output: html_document
+---
+
+```{r}
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(RColorBrewer)
+library(dplyr)
+library(pheatmap)
+library(ggraph)
+
+set.seed(805181) ## for repeatability of cluster mapping.
+```
+
+## 0- load data set
+
+-   preapre only FibHSE and PmtHEE
+
+```{r}
+## RUN first "Figure_S7C_S6A_2" to generate "R11_2_kc_fib_mel_in_all_cells.Rdata"
+load("R11_2_kc_fib_mel_in_all_cells.Rdata")
+# selected_study_cells
+
+DefaultAssay(selected_study_cells)<- "RNA"
+
+# select only FsEpi and PmtHEE
+cell_id <- subset(selected_study_cells@meta.data, 
+                  !study %in% c("FsEpi")) # 22475 cells
+
+## keep only FibHSE and PmtHEE
+selected_obj <- subset(selected_study_cells, cells=row.names(cell_id))
+```
+
+## 1- Calculate DEG between KC
+
+-   two conditions: FsEpi vs. PmtHEE.
+
+-   Select only KC cells.
+
+```{r}
+## define the only cell KC states
+kc_seurat= selected_obj[,selected_obj$Cell_states  %in% c("BAS","SPN","GRN")]
+
+## degine all cells as KC
+kc_seurat$Condition <- "KER"
+
+## 1_add new meta.data, cell_type + condition
+kc_seurat@meta.data$Condition=paste(kc_seurat@meta.data$study,kc_seurat@meta.data$Condition,sep = "_")
+
+table(kc_seurat$Condition) ## check 
+  # FibHSE_KER PmtHEE_KER 
+     # 1796       4138 
+```
+
+### [save]
+
+```{r}
+save(kc_seurat, file = "R16_1_kc_DEG_for_PmtHEE_FibHSE.Rdata")
+```
+
+## 2- DEG calculation
+
+```{r}
+Idents(kc_seurat)="Condition" # for comparison 1
+
+## 2- for Inactivated vs. Naive. [Comparison 1] [each cell types]
+  DEGs_kc <- FindMarkers(
+    kc_seurat, 
+    logfc.threshold = 0.25,  ## logfc.threshold = 0.25 default
+    min.pct = 0.25, #logfc no filter, pct set as low as 0
+    only.pos = F, 
+    test.use = "wilcox",
+    min.cells.feature = 3, # more than 3 cells express genes
+ 		min.cells.group = 10, ## the cell more than 10 ,default is 3
+  	pseudocount.use = 1,
+    ident.1="FibHSE_KER",
+    ident.2="PmtHEE_KER")
+
+## add the gene column 
+  DEGs_kc$gene=rownames(DEGs_kc)
+  
+```
+
+## 3- Check which condition is higher
+
+```{r}
+## test highest genes: FTH1 for FibHSE_KER vs. PmtHEE_KER
+custom_colors = c( FibHSE = "#FF7878",
+                   PmtHEE= "#3859FF")
+
+p1<-VlnPlot(object = kc_seurat, 
+                 features = c("FTH1"), 
+                 split.by = "study", 
+                 group.by = "Condition",
+                 pt.size = 0, 
+                 stack = F, 
+                 flip = T,
+                 cols=custom_colors) 
+ggsave("R16_3_DEG_vlnplot_check_FTH1.pdf",
+       plot = p1,
+       width = 5, 
+       height =5)
+
+# So the ident_1 is top number for DEG calcualtion, the positive log means "indet.1" is bigger and higher than ident.2
+```
+
+## 4- Annotate the DEG table and prepare the gene list
+
+```{r}
+  DEGs_kc$deg_comparison=ifelse(DEGs_kc$avg_log2FC > 0,
+                                "FibHSE_KER_up","PmtHEE_KER_up")
+      # if log2FC >O. define as FibHSE_up
+      # if <0, define as PmtHEE_up"
+  
+  DEGs_kc_top=DEGs_kc%>%filter(p_val_adj < 0.01) #p_val_adi, significant
+  
+##> extract top200 genes for each condition
+    ## for FibHSE_top200
+subset(DEGs_kc_top, deg_comparison %in% c("FibHSE_KER_up"))-> FibHSE_up
+FibHSE_up %>%group_by(deg_comparison) %>%top_n(n = 200, wt = avg_log2FC) -> FibHSE_200_up
+    ## for PmtHEE_top200
+subset(DEGs_kc_top, deg_comparison %in% c("PmtHEE_KER_up"))-> PmtHEE_up
+PmtHEE_up %>%group_by(deg_comparison) %>%top_n(n = -200, wt = avg_log2FC) -> PmtHEE_200_up
+
+##> combine them all together as single table
+rbind(FibHSE_200_up,
+      PmtHEE_200_up)-> combined_matirx
+
+## save it in list() for eahc condition, then use it for BP enrichement.
+top200_list <- split(combined_matirx$gene, 
+                     combined_matirx$deg_comparison) # how to split the genes, using conditions
+```
+
+### [save] top200_gene_list for each condition
+
+```{r}
+save(top200_list, file = "R16_4_DEG_top200_list_for_GO_BP.Rdata")
+```
+
+## 5- GO_BP enrichment comparison
+
+### 5.1 **Comparing multiple gene lists for BP enrichment**
+
+```{r}
+library(org.Hs.eg.db)
+library(clusterProfiler)
+
+ck <- compareCluster(geneCluster = top200_list,  # Two list
+                     fun = enrichGO,
+                     OrgDb = org.Hs.eg.db,
+                     keyType="SYMBOL",
+                     ont = "BP",
+                     pAdjustMethod = "BH",
+                     pvalueCutoff = 0.05,
+                     qvalueCutoff = 0.05
+                     )
+```
+
+### [FigS7B] 5.2 visualization
+
+```{r}
+p1<-dotplot(ck,
+        color = "p.adjust",
+        showCategory = 10,
+        font.size = 8, # how big is the annotation on axis.
+        label_format = 40) ## how long is the y alble lenght
+
+ggsave("FigS7B_DEG_GO_BP_PmtHEE_FibHSE_dotplot.pdf",
+       plot = p1,
+       width = 6, 
+       height =5)
+```

@@ -1,0 +1,351 @@
+---
+title: "Fig4_S5"
+author: "Yelon"
+date: "2026-03-06"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+## Fig_4
+
+-   R 4.4.1
+
+```{r}
+# BiocManager::install("Rsamtools")
+# devtools::install_github("zhanghao-njmu/SCP") # Install SCP under R4.4.1
+
+# options(reticulate.conda_binary = "/Users/yelon/miniconda3/bin/conda")
+# SCP::PrepareEnv()
+options(reticulate.conda_binary = "/Users/yelon/miniconda3/bin/conda",SCP_env_name = "SCP_env") ## need  specify the conda path first before run SCP
+library(SCP)
+library(Seurat)  # Seurat_4.4.0
+
+set.seed(805181) ## seeds
+```
+
+### Fig4A
+
+```{r}
+## input is seurat
+load("KC_only_processed.Rdata")
+KC_only_processed-> selected_kc
+```
+
+```{r}
+## plot
+cluster_color= c(
+"BAS-I"="#6BD76BCC",
+"BAS-II"="#749B58CC"  ,
+"BAS-III"="#CDDEB7CC",
+"BAS-IV"="#466983CC" ,
+"BAS-V"="#5DB1DDCC",
+"SPN-I"= "#924822CC",
+"SPN-II"= "#D58F5CCC",
+"SPN-III"= "#E4AF69CC",
+"SPN-IV"= "#F0E685CC" ,
+"GRN-I"= "#AE1F63CC",
+"GRN-II"= "#802268CC",
+"GRN-III"= "#D595A7CC")
+
+
+p1<-CellDimPlot(selected_kc, 
+            palcolor = cluster_color, # customize the cell color
+            label = TRUE, # Add number
+            label_insitu = TRUE, # add cell type name
+            pt.size = 0.7, # define the point size
+            group.by = "cell_type_0.7", 
+            reduction = "UMAP")
+            #theme_use = "theme_blank")
+
+ggsave(p1,filename = "Fig4A_1_KC_umap_plot.pdf",width = 9, height =6)
+```
+
+```{r}
+p1<-CellDimPlot(selected_kc, 
+            palcolor = cluster_color, # customize the cell color
+            pt.size = 0.7, # define the point size
+            group.by = "cell_type_0.7", 
+            split.by = "study",
+            reduction = "UMAP",
+            cells.highlight = TRUE,
+            theme_use = "theme_blank",
+            legend.position = "none",
+            nrow = 3,
+            ncol = 1) +
+      theme(plot.title = element_text(size = 20))
+
+ggsave(p1,filename = "Fig4A_2_KC_umap_plot_split.pdf",width = 9, height =18)
+```
+
+### Fig4B-similarity analysis
+
+```{r}
+#> prepare the data for similarity analysis
+library(Seurat)
+set.seed(805181) ## for repeatability of cluster mapping.
+
+load("KC_only_processed.Rdata")
+KC_only_processed-> selected_kc
+
+#> add the group annotation [BAS/SPN/GRN]
+cluster_number = names(table(selected_kc@meta.data$cell_type_0.7))
+
+cluster_number
+  ## [1] "BAS-I"   "BAS-II"  "BAS-III" "BAS-IV"  "BAS-V"   "SPN-I"   "SPN-II"  "SPN-III" "SPN-IV" 
+  ## [10] "GRN-I"   "GRN-II"  "GRN-III"
+
+annotation_cluster = c(rep("BAS",5),
+                       rep("SPN",4),
+                       rep("GRN",3))
+
+cluster_anno = data.frame(cluster_number, annotation_cluster, stringsAsFactors = F)
+
+selected_kc@meta.data$group = "NA" # define 'group'
+
+for(i in 1:nrow(cluster_anno)) { 
+selected_kc@meta.data[which(selected_kc@meta.data$cell_type_0.7 == cluster_anno$cluster_number[i]),'group'] <- cluster_anno$annotation_cluster[i] 
+}
+
+table(selected_kc$group) # check new annotation
+    ##  BAS  GRN  SPN 
+    ## 8002 4615 8488 
+```
+
+```{r}
+library(MetaNeighbor) 
+# devtools::install_git('https://github.com/gillislab/MetaNeighbor')
+library(SummarizedExperiment)
+
+library(scater)
+# install loomR from GitHub using the remotes package remotes::install_github(repo =
+# 'mojaveazure/loomR', ref = 'develop')
+library(loomR)
+library(Seurat)
+library(patchwork)
+
+kc.sce <- as.SingleCellExperiment(selected_kc,
+                                   assay="RNA") # done
+
+var_genes = variableGenes(dat = kc.sce, 
+                          exp_labels = kc.sce$study) 
+head(var_genes) # 2557 genes.
+
+celltype_NV = MetaNeighborUS(var_genes = var_genes, 
+                             dat = kc.sce, 
+                             study_id = kc.sce$study, 
+                             cell_type = kc.sce$group)
+
+# save
+library(openxlsx)
+write.xlsx(celltype_NV,rowNames=T,
+           "Data_S1_KC_AUROC_similarity.xlsx") 
+## save the data.frame "merged_COSMIC" as excel.
+```
+
+```{r}
+cols= rev(colorRampPalette(RColorBrewer::brewer.pal(11,"RdBu"))(100))
+
+breaks = seq(0, 1, length=101) 
+
+# save plot
+pdf("Fig4B_metaneighbor_plot.pdf", width = 10, height = 10)
+gplots::heatmap.2(celltype_NV, 
+                 margins = c(8, 8), 
+                 keysize = 1, 
+                 key.xlab = "", 
+                 key.title = "AUROC", 
+                 trace = "none", 
+                 density.info = "none", 
+                 col = cols,
+                 breaks = breaks, 
+                 offsetRow = 0.1, 
+                 offsetCol = 0.1, 
+                 cexRow = 1,  # size of the row labels
+                 cexCol = 1, # size of the col labels
+lmat = rbind(c(4, 3), c(2, 1)),  # Layout for color key and heatmap
+                 lhei = c(0.6, 4),  # Adjust the height of the color key (first value)
+                 lwid = c(1.5, 5))  # Adjust the width of row dendrogram and heatmap
+dev.off()
+
+```
+
+### Fig4C
+
+```{r}
+### barplot
+library(Seurat)
+library(scRNAtoolVis)
+library(tidyverse)
+library(patchwork)
+library(viridis)
+library(Seurat)
+library(scCustomize)
+
+library(scales)
+library(ggsci)
+```
+
+```{r}
+load(KC_only_with_states, 
+     file = "KC_only_with_states.Rdata")
+
+KC_only_with_states-> selected_kc
+  
+mycolor= c(
+"BAS" = "#759B59",
+"SPN"="#E3AF6A",
+"GRN"="#D595A7")
+
+selected_kc$KC_states <- factor(x = selected_kc$KC_states, 
+                  levels = c(
+"BAS",
+"SPN",
+"GRN"))
+
+p1<-cellRatioPlot(object = selected_kc,
+              sample.name = "study", # x-axis data
+              celltype.name = "KC_states", # filled value
+              col.width	= 0.7, #column width, default 0.7.
+              fill.col = mycolor, # FOR each state
+              flow.alpha = 0.25, # flow color alpha, default 0.25. transparency
+              flow.curve = 0.5)+
+  theme(axis.text.x.bottom = element_text(angle = 45,
+                                          hjust = 1,
+                                          size = 10,
+                                          color = "black"))
+
+ggsave("Fig4C_barplot_KC_and_Study.pdf", plot = p1, 
+       width = 5, height = 5)
+```
+
+## Fig_S5 lineage
+
+### Fig_S5A [FsEpi]
+
+```{r}
+##> input is seurat list
+load("seurat_KC_list.Rdata")
+kc_list$FsEpi -> selected_obj
+
+selected_obj-> sling_seurat # only for slingshot trajectory analysis.
+
+DefaultAssay(sling_seurat) # integrated
+
+## need add features from "integrated" to "RNA".
+## The function{RunSlingshor} will use only "RNA" assay to run the analysis.
+sling_seurat@assays$integrated@var.features -> sling_seurat@assays$RNA@var.features
+
+DefaultAssay(sling_seurat) <- "RNA"
+
+# Run the analysis.
+sling_seurat <- RunSlingshot(srt = sling_seurat, 
+                             group.by = "cell_type_0.7",
+                             reduction = "UMAP")
+```
+
+```{r}
+## check first the lineages
+## there are 4 paths 
+
+pdf("FigS5A_FsEpi_umap_paths_plot.pdf", width=20, height=20)
+FeatureDimPlot(sling_seurat, 
+               features = paste0("Lineage", 1:5), 
+               reduction = "UMAP", 
+               theme_use = "theme_blank")
+
+dev.off()
+```
+
+### Fig_S5C [FibHSE]
+
+```{r}
+##> input is seurat list
+load("seurat_KC_list.Rdata")
+
+kc_list$FibHSE -> selected_obj
+
+## remove SPN-I, SPN-II, SPN-III, SPN-IV.from FibHSE
+# Subset cells that are NOT in the specified cell types
+selected_id <- selected_obj@meta.data[!(selected_obj@meta.data$cell_type_0.7 %in% c("SPN-I", "SPN-II", "SPN-III", "SPN-IV")), ] # 1803 cells
+#> extract only selected cells
+new_selected_obj <- subset(selected_obj, cells=row.names(selected_id))
+
+#new obj
+
+new_selected_obj-> sling_seurat # only for slingshot trajectory analysis.
+
+DefaultAssay(sling_seurat) # integrated
+
+## need add features from "integrated" to "RNA".
+## The function{RunSlingshor} will use only "RNA" assay to run the analysis.
+sling_seurat@assays$integrated@var.features -> sling_seurat@assays$RNA@var.features
+
+DefaultAssay(sling_seurat) <- "RNA"
+
+# Run the analysis.
+sling_seurat <- RunSlingshot(srt = sling_seurat, 
+                             group.by = "cell_type_0.7",
+                             reduction = "UMAP")
+```
+
+```{r}
+## check first the lineages
+## there are 4 paths 
+
+pdf("FigS5C_FibHSE_umap_paths_plot.pdf", width=15, height=10)
+FeatureDimPlot(sling_seurat, 
+               pt.size = 1,
+               features = paste0("Lineage", 1:2), 
+               reduction = "UMAP", 
+               theme_use = "theme_blank")
+
+dev.off()
+```
+
+### Fig_S5B [PmtHEE]
+
+```{r}
+##> input is seurat list
+load("seurat_KC_list.Rdata")
+kc_list$PmtHEE -> selected_obj
+
+## remove SPN-I, SPN-II, SPN-III, SPN-IV.from FibHSE
+# Subset cells that are NOT in the specified cell types
+selected_id <- selected_obj@meta.data[!(selected_obj@meta.data$cell_type_0.7 %in% c("BAS-I", "BAS-II", "BAS-III", "BAS-IV")), ] # 4109 cells
+#> extract only selected cells
+new_selected_obj <- subset(selected_obj, cells=row.names(selected_id))
+
+#new obj
+
+new_selected_obj-> sling_seurat # only for slingshot trajectory analysis.
+
+DefaultAssay(sling_seurat) # integrated
+
+## need add features from "integrated" to "RNA".
+## The function{RunSlingshor} will use only "RNA" assay to run the analysis.
+sling_seurat@assays$integrated@var.features -> sling_seurat@assays$RNA@var.features
+
+DefaultAssay(sling_seurat) <- "RNA"
+
+# Run the analysis.
+sling_seurat <- RunSlingshot(srt = sling_seurat, 
+                             group.by = "cell_type_0.7",
+                             reduction = "UMAP",
+                             start= "BAS-V")
+```
+
+```{r}
+## check first the lineages
+## there are 4 paths 
+
+pdf("FigS5B_PmtHEE_umap_paths_plot.pdf", width=20, height=10)
+FeatureDimPlot(sling_seurat, 
+               pt.size = 1,
+               features = paste0("Lineage", 1:3), 
+               reduction = "UMAP", 
+               theme_use = "theme_blank",
+               ncol = 2)
+
+dev.off()
+```

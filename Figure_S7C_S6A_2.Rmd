@@ -1,0 +1,630 @@
+---
+title: "Figures"
+author: "Yelon"
+date: "2026-03-06"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+-   R 4.4.1
+
+```{r}
+library(CellChat)
+# install.packages("devtools")
+# devtools::install_github("immunogenomics/presto")
+# devtools::install_github("jinworks/CellChat")
+
+library(exFINDER)
+## devtools::install_github("xyang2uchicago/BioTIP"), as dependencies
+# library("devtools")
+#library(org.Mm.eg.db)
+# BiocManager::install("org.Mm.eg.db"), as dependencies
+# BiocManager::install("org.Dr.eg.db")
+## devtools::install_github("ChanghanGitHub/exFINDER")
+# devtools::install_local("exFinder_data/exFINDER.zip") 
+
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(RColorBrewer)
+library(dplyr)
+library(pheatmap)
+library(ggraph)
+
+set.seed(805181) ## for repeatability of cluster mapping.
+```
+
+## 1- Seurat input [All studies including KC/Fib/MEL]
+
+```{r}
+##> input new all cell object
+load("processed_annotated_seurat.Rdata") # new cleaned seurat obj
+processed_seurat-> selected_obj  # all cells
+
+##> meta check
+table(selected_obj$study)
+  # FibHSE  FsEpi PmtHEE 
+  #  2248  16388   4139 
+
+table(selected_obj$cell_type_0.7)
+  # BAS-I  BAS-II BAS-III  BAS-IV   BAS-V    Endo     Fib   GRN-I  GRN-II GRN-III      HF      LC     MEL 
+  # 902     563    1651    2446    2415     114     451    1168    2220    1185      75     111     987 
+  #SPN-I  SPN-II SPN-III  SPN-IV 
+  # 3026     653    1829    2979 
+```
+
+```{r}
+# select all KC, Fib and MEL cells
+cell_id <- subset(selected_obj@meta.data, 
+                  !cell_type_0.7 %in% c("HF", "LC","Endo")) # 22475 cells
+
+## extract the cells along the defined ID 
+selected_study_cells <- subset(selected_obj, cells=row.names(cell_id))
+
+# check again the cells
+table(selected_study_cells$cell_type_0.7)
+    #   BAS-I  BAS-II BAS-III  BAS-IV   BAS-V     Fib   GRN-I  GRN-II GRN-III     MEL   SPN-I  SPN-II SPN-III 
+    #902     563    1651    2446    2415     451    1168    2220    1185     987    3026     653    1829 
+    # SPN-IV 
+    # 2979 
+```
+
+## 2- Add extra cell_states
+
+```{r}
+## add the KC states for KCs
+selected_study_cells-> selected_obj
+#> get the cluster number "as character"
+cluster_number = names(table(selected_obj$cell_type_0.7))
+cluster_number = cluster_number[1:14]
+    ##>  [1] "BAS-I"   "BAS-II"  "BAS-III" "BAS-IV"  "BAS-V"   "Fib"     "GRN-I"   "GRN-II"  "GRN-III" "MEL"    
+    ## [11] "SPN-I"   "SPN-II"  "SPN-III" "SPN-IV" 
+
+  #> make corresponding cluster annotation.
+annotation_cluster = c(
+"BAS",
+"BAS",
+"BAS",
+"BAS",
+"BAS",
+"Fib",
+"GRN",
+"GRN",
+"GRN",
+"MEL",
+"SPN",
+"SPN",
+"SPN",
+"SPN")
+
+# make the corresponding annotation table with cell_cluster
+cluster_anno = data.frame(cluster_number, annotation_cluster, stringsAsFactors = F)
+
+# add empty column for meta.data
+selected_obj@meta.data$Cell_states = "NA"
+
+# fill the cell types by cluster number comparison
+for(i in 1:nrow(cluster_anno)) { 
+selected_obj@meta.data[which(selected_obj@meta.data$cell_type_0.7 == cluster_anno$cluster_number[i]),'Cell_states'] <- cluster_anno$annotation_cluster[i] 
+  }
+
+#> check the result and performance
+table(selected_obj$Cell_states)
+    #  BAS  Fib  GRN  MEL  SPN 
+    # 7977  451 4573  987 8487 
+```
+
+## [save] selected KC/Fib/MEL in all cells
+
+```{r}
+selected_obj-> selected_study_cells
+save(selected_study_cells,file = "R11_2_kc_fib_mel_in_all_cells.Rdata")
+```
+
+## 3- Prepare the split data for ExFinder
+
+```{r}
+## split the obj to FsEpi and PmtHEE
+split_list <- SplitObject(selected_obj, split.by = "study")
+
+split_list[[1]]-> Fib_obj
+split_list$FsEpi-> FsEpi_obj
+split_list$PmtHEE-> PmtHEE_obj # keep MEL
+```
+
+## [save] split seurat obj for ExFINDER
+
+```{r}
+save(Fib_obj,FsEpi_obj,PmtHEE_obj,file = "R11_3_split_obj_for_Exfinder.Rdata")
+
+# load("R11_3_split_obj_for_Exfinder.Rdata")
+```
+
+## 4- [FsEpi] DEGs for cell states
+
+```{r}
+## based on "Cell_states"-> BAS/FIB/GRN/SPN
+load("R11_3_split_obj_for_Exfinder.Rdata")
+DefaultAssay(FsEpi_obj) <- "RNA"
+Idents(FsEpi_obj)="Cell_states"
+
+markers_celltype <- FindAllMarkers(FsEpi_obj, 
+                                   only.pos = TRUE, 
+                                   min.pct = 0.25, 
+                                   logfc.threshold = 0.25,
+                                   test.use = "wilcox")
+
+## extract top10 genes
+markers_celltype %>%group_by(cluster) %>%top_n(n = 10, wt = avg_log2FC) -> top10_marker_genes_FsEpi
+
+## save it in list() for eahc cluster,create a list where each element is a vector of genes for each cluster
+top10_marker_list_FsEpi <- split(top10_marker_genes_FsEpi$gene, top10_marker_genes_FsEpi$cluster)
+```
+
+```{r}
+## plot
+
+# scale the data
+all.genes <- rownames(FsEpi_obj)
+FsEpi_obj <- ScaleData(FsEpi_obj, 
+                     features = all.genes)
+
+top10<- top10_marker_genes_FsEpi$gene
+
+p1<-DoHeatmap(FsEpi_obj, 
+          features = top10) + 
+          NoLegend() +
+  scale_fill_gradientn(colors = c("#377EB8", "white", "#E41A1C"))
+#> Scale for fill is already present.
+#> Adding another scale for fill, which will replace the existing scale.
+#> 
+#> 
+ggsave(p1,filename = "R12_4_top10_heatmap_FsEpi.pdf",
+       width = 10, height =10)
+```
+
+### [save] top10_marker genes [target genes]
+
+```{r}
+save(top10_marker_genes_FsEpi,top10_marker_list_FsEpi, 
+     file = "R12_4_top10_marker_FsEpi.Rdata")
+```
+
+## 5- Load exFINDER database
+
+```{r}
+# load exFINDER database
+load("exFinder_data/LR_layer1_human.rda")
+load("exFinder_data/RTF_layer2_human.rda")
+load("exFinder_data/TFT_layer3_human.rda")
+
+exFINDER.H <- list()
+exFINDER.H[[1]] <- LR_layer1_human
+exFINDER.H[[2]] <- RTF_layer2_human
+exFINDER.H[[3]] <- TFT_layer3_human
+```
+
+## 6- [FibHSE] Prepare the inputs for exFINDER analysis
+
+-   for external signal,
+
+    -   Fib-only
+
+    -   or environment, or unknown cells [not present from all cells]
+
+```{r}
+# define the obj
+selected_obj <- Fib_obj
+
+# defien the factor
+selected_obj$Type <- as.factor(selected_obj$Cell_states) # add "Type", very improtant for later analysis
+
+#> [Fib-only] dataset of Fib-only cells for intersted ligand-expressing cells
+cell_id <- subset(selected_obj@meta.data, 
+                  Cell_states %in% c("Fib")) # 451 cells
+fib_only_cells <- subset(selected_obj, cells=row.names(cell_id))
+
+exp.data <- fib_only_cells@assays$RNA@data
+meta.data <- fib_only_cells@meta.data ## need column ""Type" for cell labels
+
+##> [KC-only] dataset
+cell_id <- subset(selected_obj@meta.data, 
+                  !Cell_states %in% c("Fib")) # 1796 cells
+kc_only_cells <- subset(selected_obj, cells=row.names(cell_id))
+
+exp.data2 <- kc_only_cells@assays$RNA@data
+meta.data2 <- kc_only_cells@meta.data ## need column ""Type" for cell labels
+
+#> [All cells] the complete dataset contains all cells, which used for "external signals" from unknown cells or environment.
+exp.Exdata <- selected_obj@assays$RNA@data
+meta.Exdata <- selected_obj@meta.data
+```
+
+### 6.1- Calculate the threshold for each cell states
+
+-   check the threshold for low and high expressed genes
+
+```{r}
+## calculate the percentile values of cell groups for determining the cutoff thresholds for “barely expressed genes” and “highly expressed genes” in later analysis
+data <- get_percentile(Exp.Data = exp.Exdata,
+               Meta.Data = meta.Exdata,
+               percentile = c(.5, .75, .90))
+
+p1<-ggplot(data=data, aes(x=Type, 
+                      y=Ave.Exp., 
+                      color=Prob.)) +
+  geom_point(size=3) +
+  theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 0.5, vjust = 0.5))
+
+##
+ggsave(p1,filename = "R13_6.1_threshold_check_FibHSE.pdf",
+       width = 5, height =4)
+
+## lowly expressed threshold is lower than 0.5
+## highly expressed threshold is higher than 0.9 for each cell group.
+## Next, we mark those lowly expressed ligands among all cell groups as potential external signals.
+```
+
+## 7- [FibHSE] **Identify all external signals that come from NON-KC cells targeting KC cells**
+
+-   Could be the ligands from Fib or MEL.
+
+-   ligand--target Gene Regulatory Network (GRN) = ltGRN
+
+-   the external signal-target signaling network = (exSigNet)
+
+-   KC is target cells, need KC marker genes.
+
+```{r}
+##> Setup target genes (From KC) and infer ltGRN
+##> using KC marker genes
+target.gene <- c(top10_marker_list_FsEpi$BAS,
+                 top10_marker_list_FsEpi$GRN,
+                 top10_marker_list_FsEpi$SPN)
+
+##> infer ltGRN, using KC as target cells
+ltGRN <- get_ltGRN(Target = target.gene, DB = exFINDER.H)
+  # we get all KC-relatd itGRNs now, as ref.
+```
+
+#### [save] KC target genes + ltGRN
+
+```{r}
+save(target.gene,ltGRN, file = "R12_7_KC_target_genes_ltGRN.Rdata")
+```
+
+### 7.1 [Fib+ Env Ligands, KC as targets]
+
+-   Find all ligands not expressed from KC.
+-   target KC as input
+
+```{r}
+##> Identify external signals and infer exSigNet
+##> [KC-only] used here. We are intersted in the ligands of Non-KC cells, here could be only Fib.
+  # should very low in KC, may be highly expressed in the Fib cells or external environment
+  # based on ltGRN to find out the ligands very low in KC
+  # the threshold to degine the low expressed in KC is < 0.072
+
+meta.data2$Type <- as.factor(meta.data2$Cell_states) # ## very important
+      # must be "factor" for all cell types.
+Pex <- get_potentialex(Graph = ltGRN,
+                Exp.Data = exp.data2,
+                Meta.Data = meta.data2,
+                cutoff = -0.04, # new lower threshold 
+                AG.L = NULL)
+## we found 609 ligands not expressed in KC
+head(Pex)
+#> [1] "PLEKHO2" "INHBE"   "ITGAM"   "ITGA4"   "ITGA9"   "JAM3"
+
+```
+
+-   We have KC-ltGRN, and external Ligands, next, check the R/TF and target genes on Target cells t infer exSigNet. define the high threshold....
+-   lexternal ligand in KC [low], R/TF/Target shoiuld be high in KC
+
+```{r}
+# [KC-only] infer exSigNet (R, TF, T are all highly expressed, L comes from the potential external signals)
+##> We need the Lignad low [KC], R/TF/Target high in KC.
+##> 
+exSigNet <- get_exSigNet(Graph = ltGRN,
+                       Ligands = Pex, # the ligands must be potential external signals
+                       Exp.Data = exp.data2,
+                       Meta.Data = meta.data2,
+                       par.cutoff = c(0.55, 0.55), #  two threshold for Receptor and TF.
+                       # we select the receptors that are highly expressed in the KC
+                       AG.R = c("BAS"),  
+                       # we select the receptors that are highly expressed in the KC
+                       AG.TF = c('BAS',"SPN","GRN"))
+
+## remove the overlap found.
+exSigNet <- fix_OverLap(exSigNet)
+# #> [1] "No overlap found!"
+
+# check details
+get_NetworkDetail(exSigNet) # show the details of exSigNet
+  # Number of ligands:  125 
+```
+
+-   Check the ligand expression in all cells, KC should be very low
+
+```{r}
+# [All-cells] check the external ligands and their expressions via heatmap
+exS <- exSigNet$Graph.Node$Gene[exSigNet$Graph.Node$Role == "Ligand"]
+
+p1<-get_heatmap(Gene = exS,
+            Exp.Data = exp.Exdata,
+            Meta.Data = meta.Exdata,
+            cellwidth = 20,
+            cellheight = 10,
+            fontsize_row = 5,
+             cluster_rows = TRUE)
+
+ggsave(p1,filename = "R13_7.1_heatmap_ligand_check_FibHSE.pdf",
+       width = 10, height =20)
+```
+
+### 7.2 [Fib exSigNet, KC as target]
+
+-   Identify the exSigNet from MEL
+
+-   using the highly expressed gene thresholds
+
+```{r}
+# select the external signals that expressed by MEL cells and infer the corresponding exSigNet
+exSigNet.2 <- get_exSigNetExData(Graph = exSigNet,
+                                 Exp.ExData = exp.Exdata,
+                                 Meta.ExData = meta.Exdata,
+                                 cutoff.ExData = 0.55,
+                                 # find the external signals that are highly expressed in the Fib
+                                 AG.ExData = c('Fib')) # define which Cell ligands you want to see. 
+
+#####>>>>>>>>>>>>>>.>>>>>>>>>>>>>>>>>>>>>>>>>>>
+## if overlap found, we shoud fix it by.
+## exSigNet <- fix_OverLap(exSigNet)
+# #> [1] "No overlap found!"
+# What does “overlap” mean in this context?
+# In an external signaling network (exSigNet), you usually have a directed graph showing signaling from source nodes (e.g., ligands or upstream regulators) to target nodes (e.g., DEGs or downstream transcription factors).
+```
+
+-   calculate expression levels of the genes(nodes) in MEL, and predict signaling strength(weight).
+
+```{r}
+# calculate the expression levels in Fib, WE ARE intersted only in KC, so still use KC data for target.
+exSigNet.2 <- get_NodeValue(Graph = exSigNet.2,
+                          Exp.Data = exp.data2, ## target cell KC
+                          Meta.Data = meta.data2, ## target cell KC
+                          AG.R = c("BAS"),
+                          AG.TF = c('BAS',"SPN","GRN"), #
+                          AG.T = c('BAS',"SPN","GRN"), # Target genes
+                          Exp.ExData = exp.Exdata,
+                          Meta.ExData = meta.Exdata,
+                          # the expression of external signals are calculated using the data of MEL
+                          AG.ExData = c('Fib'))
+
+# predict signaling strengths (the default value of Kh is 2)
+exSigNet.2 <- get_EdgeWeight(Graph = exSigNet.2, 
+               Kh = 2)
+```
+
+#### [Fig_S7C_1] [Visualize exSigNet for Fib ligands] exSigNet heatmap
+
+```{r}
+# prepare the dataframe for heatmap plot [MEL ligand-target network]
+exS_exp <- get_AveExp(Gene = exSigNet.2$Graph.Node$Gene,
+           Exp.Data = exp.Exdata, # all cells
+           Meta.Data = meta.Exdata)  # all cells
+
+exS_exp.HP <- exS_exp
+exS_exp.HP <- exS_exp.HP[, -1]
+row.names(exS_exp.HP) <- exS_exp$Gene
+
+# make data.frame includes all cell states
+exS_exp.HP <- data.frame("BAS" = exS_exp.HP$BAS,
+                     "SPN" = exS_exp.HP$SPN, 
+                     'GRN' = exS_exp.HP$GRN,
+                     "Fib" = exS_exp.HP$Fib)
+
+row.names(exS_exp.HP) <- exS_exp$Gene
+
+# [annotation col] customize the row labels and col labels
+annotation_col = data.frame(
+  CellType = c("KC", "KC", "KC", "Fib"))
+rownames(annotation_col) = colnames(exS_exp.HP)
+
+## ready for plot
+annotation_row <- data.frame(Role = exSigNet.2$Graph.Node$Role)
+row.names(annotation_row) <- row.names(exS_exp.HP)
+```
+
+-   plot
+
+```{r}
+# heatmap plot
+bk <- c(seq(0,1.99,by=0.01), seq(2,4.5,by=0.01))
+
+p <- pheatmap(exS_exp.HP, # modify the gene list can modify the heatmap.
+         cluster_row = FALSE, 
+         cluster_cols = FALSE, 
+         cellwidth = 12, 
+         cellheight = 12,
+         # gaps_row = c(1, 2, 6),
+         fontsize_row = 10,
+         fontsize_col = 10,
+         annotation_row = annotation_row,
+         annotation_col = annotation_col,
+         color = colorRampPalette(rev(brewer.pal(n = 7, name ="RdYlBu")))(length(bk)),
+         breaks=bk)
+
+ggsave(p,filename = "FigS7C_1_heatmap_exSigNet_for_Fib_FibHSE.pdf",
+       width = 10, height =20)
+```
+
+## 8- [FibHSE] Identify external signals come from env targeting KC cells.
+
+-   *come from external environment* means very low (or zero) expressions in all measured cells (Fib and KC cells).
+
+### 8.1 [Env Ligands, KC as targets]
+
+-   all cells used here
+
+```{r}
+# infer potential external signals from ltGRN: low expression in measured cells [All cells], here predict only ligands
+Pex.2 <- get_potentialex(Graph = ltGRN,
+                Exp.Data = exp.Exdata,
+                Meta.Data = meta.Exdata,
+                cutoff = -0.04, # lower threshold
+                AG.L = NULL) # all from env ligand
+head(Pex.2)
+#> [1] "INHBE" "ITGAM" "ITGA4" "ITGA9" "L1CAM" "NFASC"
+```
+
+-   the KC-related exSigNet from env.
+
+```{r}
+# [KC-only] infer exSigNet (R, TF, T are all highly expressed, L comes from the potential external signals)
+##> We need the Lignad low [KC], R/TF/Target high in KC.
+##> 
+exSigNet.3 <- get_exSigNet(Graph = ltGRN,
+                       Ligands = Pex.2, # the ligands must be potential external signals
+                       Exp.Data = exp.data2,
+                       Meta.Data = meta.data2,
+                       par.cutoff = c(0.55, 0.55), #  two threshold for Receptor and TF.
+                       # we select the receptors that are highly expressed in the KC
+                       AG.R = c("BAS"),  
+                       # we select the receptors that are highly expressed in the KC
+                       AG.TF = c('BAS',"SPN","GRN"))
+
+
+## remove the overlap found.
+exSigNet.3 <- fix_OverLap(exSigNet.3)
+# #> [1] "No overlap found!"
+
+get_NetworkDetail(exSigNet.3) # show the details of exSigNet
+  # Number of ligands:  76 
+  # Number of receptors:  26 
+```
+
+-   run the following function to select the receptors that only interact with external signals.
+
+```{r}
+# any receptors, if inteacted with present cell ligands with be removed.
+exSigNet.3 <- filterLR_exSigNet(Graph = exSigNet.3,
+                  Exp.Data = exp.Exdata,
+                  DB = exFINDER.H)
+
+get_NetworkDetail(exSigNet.3) # show the details of exSigNet
+  # Number of ligands:  3
+  # Number of receptors:  3 
+```
+
+```{r}
+# check the inferred external signals and their expressions via heatmap
+exS.2 <- exSigNet.3$Graph.Node$Gene[exSigNet.3$Graph.Node$Role == "Ligand"]
+
+# visualize on all cells to see ligand expression.
+p1<-get_heatmap(Gene = exS.2,
+            Exp.Data = exp.Exdata,
+            Meta.Data = meta.Exdata,
+            cellwidth = 20,
+            cellheight = 10,
+            fontsize_row = 5,
+             cluster_rows = TRUE)
+
+ggsave(p1,filename = "R13_8.1_heatmap_env_ligand_FibHSE.pdf",
+       width = 10, height =10)
+```
+
+### 8.2 [Env exSigNet, KC as target]
+
+-   no need to selected high expressed ligand, because they are from env, so all should be 0.
+
+```{r}
+# calculate the expression levels in Fib, WE ARE intersted only in KC, so still use KC data for target.
+exSigNet.4 <- get_NodeValue(Graph = exSigNet.3,
+                          Exp.Data = exp.data2, ## target cell KC
+                          Meta.Data = meta.data2, ## target cell KC
+                          AG.R = c("BAS"),
+                          AG.TF = c('BAS',"SPN","GRN"), #
+                          AG.T = c('BAS',"SPN","GRN"), # Target genes
+                          # if there is no expresison data for ligands, exFINDER will set them to 1.
+                          Exp.ExData = NULL, # no data for env
+                          Meta.ExData = NULL,
+                          AG.ExData = NULL) # no ligand source.
+
+# predict signaling strengths (the default value of Kh is 2)
+exSigNet.4 <- get_EdgeWeight(Graph = exSigNet.4, 
+               Kh = 2)
+```
+
+#### [FigS6A_2] [Visualize exSigNet for env ligand] heatmap
+
+```{r}
+# prepare the dataframe for heatmap plot [env ligand-target network]
+#> if error, use "get_AveExp(Gene = unique(exSigNet$Graph.Node$Gene),"
+exS.2_exp <- get_AveExp(Gene = exSigNet.4$Graph.Node$Gene,
+           Exp.Data = exp.Exdata, # all cells
+           Meta.Data = meta.Exdata)  # all cells
+
+exS.2_exp.HP <- exS.2_exp
+exS.2_exp.HP <- exS.2_exp.HP[, -1]
+row.names(exS.2_exp.HP) <- exS.2_exp$Gene
+
+# make data.frame includes all cell states
+exS.2_exp.HP <- data.frame("BAS" = exS.2_exp.HP$BAS,
+                     "SPN" = exS.2_exp.HP$SPN, 
+                     'GRN' = exS.2_exp.HP$GRN,
+                     "Fib" = exS.2_exp.HP$Fib)
+
+row.names(exS.2_exp.HP) <- exS.2_exp$Gene
+
+# [annotation col] customize the row labels and col labels
+annotation_col = data.frame(
+  CellType = c("KC", "KC", "KC", "Fib"))
+rownames(annotation_col) = colnames(exS.2_exp.HP)
+
+
+annotation_row <- data.frame(Role = exSigNet.4$Graph.Node$Role)
+row.names(annotation_row) <- row.names(exS.2_exp.HP)
+```
+
+-   Plot
+
+```{r}
+# heatmap plot
+bk <- c(seq(0,1.99,by=0.01), seq(2,4.5,by=0.01))
+
+role_colors <- c(
+  "Ligand" = "#FF89FF", 
+  "Receptor" = "#FF9288",  
+  "TF" = "#01D65C",  
+  "Target" = "#82B7FF"   # pink
+)
+
+annotation_colors <- list(Role = role_colors,
+                          CellType =c("KC"= "#BEC100",
+                                       "Fib" = "#04DAE0"))
+
+p <- pheatmap(exS.2_exp.HP, # modify the gene list can modify the heatmap.
+         cluster_row = FALSE, 
+         cluster_cols = FALSE, 
+         cellwidth = 12, 
+         cellheight = 12,
+         # gaps_row = c(1, 2, 6),
+         fontsize_row = 10,
+         fontsize_col = 10,
+         annotation_row = annotation_row,
+         annotation_col = annotation_col,
+         annotation_colors = annotation_colors,
+         color = colorRampPalette(rev(brewer.pal(n = 7, name ="RdYlBu")))(length(bk)),
+         breaks=bk)
+
+ggsave(p,filename = "FigS6A_2_heatmap_exSigNet_for_env_FibHSE.pdf",
+       width = 10, height =20)
+```
+
+### [Figs7C_2] is part of FigS6A_2
+
+```{r}
+# FigS7C_2_heatmap_exSigNet_for_env_FibHSE.pdf
+```
